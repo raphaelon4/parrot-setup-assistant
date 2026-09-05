@@ -51,6 +51,46 @@ except Exception:
     HAS_TK = False
 
 
+# QML-Module, die es in Qt6 nicht mehr gibt. Ein SDDM-Greeter auf Qt6 kann ein
+# Theme, das sie importiert, nicht laden: er faellt auf ein Ersatz-Theme zurueck,
+# scheitert auch daran - und es erscheint ueberhaupt kein Anmeldebildschirm.
+# Der Rechner landet nach dem Neustart in der Textkonsole.
+QT5_ONLY_QML_MODULE = "QtGraphicalEffects"
+
+
+def sddm_qt_major():
+    """Gibt zurueck, gegen welche Qt-Version der SDDM-Greeter gebaut ist."""
+    sddm = shutil.which("sddm")
+    if not sddm:
+        return None
+    try:
+        p = subprocess.run(["ldd", sddm], capture_output=True, text=True, timeout=5)
+        if "libQt6Core" in p.stdout:
+            return 6
+        if "libQt5Core" in p.stdout:
+            return 5
+    except Exception:
+        pass
+    return None
+
+
+def archive_uses_qt5_only_qml(archive_path):
+    """Prueft ein Theme-Archiv auf QML-Importe, die unter Qt6 fehlen."""
+    try:
+        with tarfile.open(archive_path, "r:*") as tf:
+            for member in tf.getmembers():
+                if not member.isfile() or not member.name.lower().endswith(".qml"):
+                    continue
+                fh = tf.extractfile(member)
+                if fh is None:
+                    continue
+                if QT5_ONLY_QML_MODULE.encode() in fh.read():
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def safe_extract(archive_path, dest):
     """Entpackt ein tar/zip-Archiv nach dest.
 
@@ -774,17 +814,55 @@ MimeType=x-scheme-handler/antigravity;
                     except Exception as e:
                         self.log(f"Fehler bei Casper Splash: {e}", tag="WARN")
 
-                # 5. SDDM Themes (sddm_wynn & KDE-Story)
-                self.run_cmd("mkdir -p /usr/share/sddm/themes /etc/sddm.conf.d", "SDDM Verzeichnisse anlegen")
+                # 5. SDDM-Anmeldethemes
+                # Die Dateien werden immer installiert, AKTIVIERT wird ein Theme
+                # aber nur, wenn es zur Qt-Version des Greeters passt. Sonst
+                # startet nach dem Neustart kein Anmeldebildschirm mehr und der
+                # Rechner bleibt in der Textkonsole stehen.
+                self.run_cmd("mkdir -p /usr/share/sddm/themes /etc/sddm.conf.d",
+                             "SDDM-Verzeichnisse anlegen", critical=False)
+
+                qt_major = sddm_qt_major()
+                self.log(f"SDDM-Greeter laeuft auf Qt{qt_major or '?'}", tag="INFO")
+
                 wynn_tar = themes_dir / "sddm_wynn-theme-1.4.tar.gz"
                 if wynn_tar.exists():
-                    self.run_cmd(f"tar -xzf '{wynn_tar}' -C /usr/share/sddm/themes/", "sddm_wynn Theme installieren", critical=False)
-                
+                    self.run_cmd(f"tar -xzf {shlex.quote(str(wynn_tar))} -C /usr/share/sddm/themes/",
+                                 "sddm_wynn Theme installieren", critical=False)
+
                 kdestory_tar = themes_dir / "KDE-Story.tar.gz"
                 if kdestory_tar.exists():
-                    self.run_cmd(f"mkdir -p /usr/share/sddm/themes/KDE-Story && tar -xzf '{kdestory_tar}' -C /usr/share/sddm/themes/KDE-Story --strip-components=1", "KDE-Story SDDM Theme installieren", critical=False)
-                    self.kwrite("/etc/sddm.conf.d/kde_settings.conf", "Theme", "Current", "KDE-Story",
-                                "KDE-Story als SDDM-Anmeldethema setzen", use_sudo=True)
+                    self.run_cmd(
+                        "mkdir -p /usr/share/sddm/themes/KDE-Story && "
+                        f"tar -xzf {shlex.quote(str(kdestory_tar))} "
+                        "-C /usr/share/sddm/themes/KDE-Story --strip-components=1",
+                        "KDE-Story SDDM-Theme installieren", critical=False)
+
+                    unvertraeglich = (qt_major == 6 and archive_uses_qt5_only_qml(kdestory_tar))
+                    if unvertraeglich:
+                        self.log("=" * 60, tag="WARN")
+                        self.log("KDE-Story wird NICHT als Anmeldethema aktiviert.", tag="WARN")
+                        self.log(f"Das Theme importiert {QT5_ONLY_QML_MODULE}; dieses QML-Modul "
+                                 "wurde in Qt6 entfernt.", tag="WARN")
+                        self.log("Wuerde es aktiviert, koennte der Anmeldebildschirm nach dem "
+                                 "Neustart nicht mehr starten.", tag="WARN")
+                        self.log("Der Anmeldebildschirm bleibt deshalb unveraendert.", tag="WARN")
+                        self.log("=" * 60, tag="WARN")
+                        self.warnings.append(
+                            "Anmeldebildschirm unveraendert gelassen: 'KDE-Story' ist ein "
+                            "Qt5-Theme und mit dem Qt6-Greeter von Plasma 6 nicht lauffaehig. "
+                            "Die Theme-Dateien liegen trotzdem unter /usr/share/sddm/themes/."
+                        )
+                    else:
+                        # Vor jeder Aenderung eine Sicherung - damit man aus der
+                        # Textkonsole heraus zurueck kann, falls doch etwas klemmt.
+                        self.run_cmd(
+                            "test -f /etc/sddm.conf.d/kde_settings.conf && "
+                            "cp -n /etc/sddm.conf.d/kde_settings.conf "
+                            "/etc/sddm.conf.d/kde_settings.conf.bak-parrot-setup || true",
+                            "Sicherung der SDDM-Konfiguration anlegen", critical=False)
+                        self.kwrite("/etc/sddm.conf.d/kde_settings.conf", "Theme", "Current", "KDE-Story",
+                                    "KDE-Story als Anmeldethema setzen", use_sudo=True)
 
                 self.run_cmd("kbuildsycoca6 --noincremental 2>/dev/null || kbuildsycoca5 --noincremental 2>/dev/null || true",
                              "Anwendungs-/Theme-Datenbank neu aufbauen", use_sudo=False, critical=False)

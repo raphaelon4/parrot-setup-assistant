@@ -93,7 +93,16 @@ Nach der Treiberinstallation ist ein **Neustart nötig** – erst dann löst der
 | Icons | Arc-ICONS |
 | Fensterdekoration | Windows 10 Dark (Aurorae) |
 | Ladebildschirm | Kuro the Cat, Casper the Morning Star |
-| Anmeldebildschirm (SDDM) | KDE-Story, sddm_wynn |
+| Anmeldebildschirm (SDDM) | KDE-Story, sddm_wynn – werden installiert, aber auf Plasma 6 **nicht aktiviert**, siehe unten |
+
+> **Warum der Anmeldebildschirm unangetastet bleibt:** Beide SDDM-Themes stammen aus der
+> Qt5-Zeit und importieren `QtGraphicalEffects`. Dieses QML-Modul wurde in Qt6 entfernt, und
+> Plasma 6 bringt SDDM auf Qt6 mit. Ein aktiviertes Qt5-Theme führt dazu, dass der Greeter
+> nicht lädt, auf ein Ersatz-Theme zurückfällt, auch daran scheitert – und nach dem Neustart
+> **gar kein Anmeldebildschirm mehr erscheint**, der Rechner also in der Textkonsole landet.
+> Der Assistent prüft das jetzt vorher, installiert die Theme-Dateien trotzdem und lässt den
+> Anmeldebildschirm in Ruhe. Vor jeder Änderung an der SDDM-Konfiguration wird zusätzlich
+> eine Sicherung angelegt.
 
 ### 🌸 4. Rosa Akzentfarbe & Hintergrundbild
 
@@ -151,11 +160,40 @@ System nicht verfügbar waren, und was du noch selbst erledigen musst (z. B. Sec
 
 ---
 
+## 🚑 Nach dem Neustart landet der Rechner in der Textkonsole
+
+Kein grafischer Anmeldebildschirm, nur `parrot login:` auf schwarzem Grund? Dann dort
+anmelden und ausführen:
+
+```bash
+cd ~/parrot-setup-assistant && git pull && ./rettung.sh
+```
+
+Das Skript prüft Anmeldedienst, Theme, Qt-Version, Grafiktreiber und Secure Boot, sagt
+dir, was die Ursache ist, und setzt auf Nachfrage den Anmeldebildschirm auf ein
+funktionierendes Theme zurück. Desktop-Designs, Tastatur und Akzentfarbe bleiben dabei
+unangetastet.
+
+Nur prüfen, ohne etwas zu ändern:
+
+```bash
+./rettung.sh --nur-pruefen
+```
+
+Ohne Netzwerk geht es auch von Hand:
+
+```bash
+sudo kwriteconfig6 --file /etc/sddm.conf.d/kde_settings.conf --group Theme --key Current breeze && sudo systemctl restart sddm
+```
+
+---
+
 ## 🔍 Wenn etwas nicht klappt
 
 | Symptom | Ursache & Lösung |
 |---|---|
 | `@` geht nach dem Neustart wieder nicht | `grep XKBLAYOUT /etc/default/keyboard` – muss `"de"` zeigen. Unter Wayland einmal ab- und anmelden. |
+| Nach dem Neustart nur Textkonsole, kein Anmeldebildschirm | Meist ein unverträgliches SDDM-Theme. `./rettung.sh` ausführen (siehe oben). |
 | Schwarzer Bildschirm nach NVIDIA-Neustart | Fast immer Secure Boot. Im BIOS/UEFI abschalten oder das Modul per MOK signieren. Prüfen mit `mokutil --sb-state`. |
 | Spiele starten in Steam nicht | Die 32-Bit-Treiberbibliotheken fehlen. Assistent mit Steam **und** NVIDIA zusammen nochmal laufen lassen. |
 | Rosa Akzentfarbe verschwindet | Passiert, wenn `AccentColorFromWallpaper` wieder aktiviert wurde – Punkt 4 erneut ausführen. |
