@@ -1268,8 +1268,11 @@ class SetupAssistantGUI:
         self._add_checkbox_item(
             scroll_content,
             self.var_claude,
-            "🤖 Claude Desktop (Anthropic KI-Assistent)",
-            "Installiert die offizielle Claude Desktop-Anwendung mit Starter im Startmenü und Schlüsselbund-Passwortspeicherung."
+            "🤖 Claude Desktop (Community-Build)",
+            "Installiert Claude Desktop samt Starter im Startmenü und Schlüsselbund. "
+            "Achtung: Anthropic bietet kein offizielles Linux-Paket an – die Installation "
+            "bindet das fremde Repository pkg.claude-desktop-debian.dev mit eigenem "
+            "GPG-Schlüssel ein. Wer das nicht möchte, lässt dieses Häkchen weg."
         )
 
         self._add_checkbox_item(
@@ -1859,7 +1862,7 @@ def run_cli_mode(info):
             "Google Antigravity 2.0 (Desktop-UI) installieren?"
             + ("" if info["antigravity_archive"] else "  [Archiv fehlt – wird übersprungen]"),
             bool(info["antigravity_archive"])),
-        "claude": ask_yes_no("Claude Desktop (Anthropic KI) installieren?", True),
+        "claude": ask_yes_no("Claude Desktop installieren? (Community-Build, nicht von Anthropic)", True),
         "steam": ask_yes_no("Valve Steam (Gaming-Plattform) installieren?", True),
         "system_update": ask_yes_no("Parrot OS System-Updates durchführen?", True),
         "amd_ryzen": ask_yes_no("AMD Ryzen Optimierungen (Microcode & Sensoren)?", info["is_amd_cpu"]),
@@ -1875,12 +1878,33 @@ def run_cli_mode(info):
     password = ""
     if os.geteuid() != 0:
         import getpass
-        while True:
-            password = getpass.getpass("\n🔑 Sudo-Passwort für die Installation eingeben: ")
-            p = subprocess.run(["sudo", "-S", "-v"], input=f"{password}\n", text=True, capture_output=True)
+        versuche = 3
+        for versuch in range(1, versuche + 1):
+            try:
+                password = getpass.getpass("\n🔑 Sudo-Passwort für die Installation eingeben: ")
+            except (EOFError, KeyboardInterrupt):
+                # Ohne Terminal (Pipe, /dev/null) gab es hier vorher einen
+                # Python-Traceback statt einer verständlichen Meldung.
+                print(f"\n{c_red}Abgebrochen: keine Passworteingabe möglich.{c_reset}")
+                print("Der Assistent braucht ein echtes Terminal. Bitte direkt aufrufen:")
+                print("  ./start.sh --cli\n")
+                return
+            p = subprocess.run(["sudo", "-S", "-v"], input=f"{password}\n",
+                               text=True, capture_output=True)
             if p.returncode == 0:
                 break
-            print(f"{c_red}Falsches Passwort, bitte erneut eingeben.{c_reset}")
+            err = (p.stderr or "").strip()
+            if "not in the sudoers" in err or "not allowed" in err:
+                benutzer = os.environ.get("USER", "BENUTZER")
+                print(f"\n{c_red}Der Benutzer '{benutzer}' darf kein sudo ausführen.{c_reset}")
+                print("Ein Administrator muss ihn zur Gruppe 'sudo' hinzufügen:")
+                print(f"  usermod -aG sudo {benutzer}\n")
+                return
+            if versuch < versuche:
+                print(f"{c_red}Falsches Passwort ({versuch}/{versuche}), bitte erneut eingeben.{c_reset}")
+            else:
+                print(f"\n{c_red}Dreimal falsch – abgebrochen. Es wurde nichts verändert.{c_reset}\n")
+                return
 
     print(f"\n{c_green}{c_bold}Starte Installation & Styling... Bitte warten!{c_reset}\n")
 
