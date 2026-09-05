@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Discord & AnyDesk installieren
+Comment=Installiert Discord und AnyDesk samt Desktop-Symbolen – ein Klick, ein Passwort
+Exec=/bin/bash -c "p=\\"%k\\"; p=\\"\\${p#file://}\\"; cd \\"\\$(dirname \\"\\$p\\")\\" && exec ./discord-anydesk-installer.sh"
+Icon=system-software-install
+Terminal=true
+Categories=System;
+StartupNotify=true
