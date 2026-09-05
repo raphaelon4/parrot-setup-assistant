@@ -1,0 +1,13 @@
+# Große Binärdateien – bewusst nicht im Repo (GitHub-Limit: 100 MB pro Datei)
+Antigravity.tar.gz
+antigravity.tar.gz
+*.deb
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Sicherungen / Arbeitsdateien
+*.bak
+*.orig
+*~
