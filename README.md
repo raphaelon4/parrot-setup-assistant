@@ -12,7 +12,7 @@ das **Tastaturlayout** und der **NVIDIA-Treiber**.
 ## 🚀 Schnellstart (Terminal)
 
 ```bash
-git clone https://github.com/DEIN-GITHUB-NAME/parrot-setup-assistant.git
+git clone https://github.com/raphaelon4/parrot-setup-assistant.git
 ```
 
 ```bash
