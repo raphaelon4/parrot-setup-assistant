@@ -1,132 +1,139 @@
 #!/bin/bash
 # =============================================================================
-# Rettung: grafischer Anmeldebildschirm startet nicht (Landung in der Konsole)
+# Diagnose: nach dem Neustart erscheint kein grafischer Anmeldebildschirm
 #
-# Bekannte Ursache: Die SDDM-Themes "KDE-Story" und "sddm_wynn" stammen aus der
-# Qt5-Zeit und importieren QtGraphicalEffects. Dieses Modul gibt es in Qt6 nicht
-# mehr. Plasma 6 bringt SDDM auf Qt6 mit -> der Greeter kann das Theme nicht
-# laden, faellt auf ein Ersatz-Theme zurueck, das ebenfalls scheitert, und es
-# erscheint gar kein Anmeldebildschirm.
+# Ermittelt erst die Fakten und benennt dann die Ursache. Es wird NICHTS
+# veraendert, solange nicht ausdruecklich zugestimmt wird.
 # =============================================================================
 set -uo pipefail
 
 rot=$'\e[31m'; gruen=$'\e[32m'; gelb=$'\e[33m'; fett=$'\e[1m'; aus=$'\e[0m'
-nur_pruefen=0
-[ "${1:-}" = "--nur-pruefen" ] && nur_pruefen=1
+befund=""
+merke() { befund="${befund}$1"$'\n'; }
 
-echo "${fett}=============================================${aus}"
-echo "${fett}  Parrot Setup-Assistent – Rettung${aus}"
-echo "${fett}=============================================${aus}"
+echo "${fett}==================================================${aus}"
+echo "${fett}  Kein Anmeldebildschirm – Diagnose${aus}"
+echo "${fett}==================================================${aus}"
 echo
 
-# ---------------------------------------------------------------- Diagnose ---
-echo "${fett}1) Anmeldedienst (SDDM)${aus}"
-systemctl is-enabled sddm 2>/dev/null | sed 's/^/   aktiviert: /'
-systemctl is-active  sddm 2>/dev/null | sed 's/^/   laeuft:    /'
+# ------------------------------------------------------------- 1) Zielzustand
+echo "${fett}1) Startziel des Systems${aus}"
+ziel=$(systemctl get-default 2>/dev/null)
+echo "   $ziel"
+if [ "$ziel" != "graphical.target" ]; then
+    echo "   ${rot}Das System startet absichtlich OHNE Grafik.${aus}"
+    merke "URSACHE: Startziel steht auf '$ziel' statt graphical.target."
+    merke "  FIX: sudo systemctl set-default graphical.target && sudo reboot"
+fi
 echo
 
-echo "${fett}2) Eingestelltes Anmelde-Theme${aus}"
-theme_aktuell=""
-for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do
-    [ -f "$f" ] || continue
-    t=$(grep -oP '^\s*Current\s*=\s*\K.*' "$f" 2>/dev/null | tail -1)
-    [ -n "$t" ] && { theme_aktuell="$t"; echo "   $f  ->  Current=$t"; }
+# --------------------------------------------------- 2) Welcher Anmeldedienst
+echo "${fett}2) Anmeldedienst${aus}"
+konfiguriert=$(cat /etc/X11/default-display-manager 2>/dev/null)
+echo "   eingetragen: ${konfiguriert:-keiner}"
+aktiver_dm=""
+for dm in lightdm sddm gdm3 lxdm; do
+    dpkg -l "$dm" >/dev/null 2>&1 || continue
+    en=$(systemctl is-enabled "$dm" 2>/dev/null)
+    ac=$(systemctl is-active  "$dm" 2>/dev/null)
+    printf "   %-9s enabled=%-9s active=%s\n" "$dm" "$en" "$ac"
+    [ "$ac" = "active" ] && aktiver_dm="$dm"
+    [ -z "$aktiver_dm" ] && [ "$en" = "enabled" ] && aktiver_dm="$dm"
 done
-[ -z "$theme_aktuell" ] && echo "   kein Theme gesetzt (Standard)"
-echo
-
-echo "${fett}3) Qt-Version des Anmeldebildschirms${aus}"
-qt_major="?"
-if command -v sddm >/dev/null 2>&1; then
-    if ldd "$(command -v sddm)" 2>/dev/null | grep -q libQt6Core; then
-        qt_major=6
-    elif ldd "$(command -v sddm)" 2>/dev/null | grep -q libQt5Core; then
-        qt_major=5
-    fi
-fi
-echo "   SDDM laeuft auf Qt$qt_major"
-if [ "$qt_major" = "6" ] && [ ! -d /usr/lib/x86_64-linux-gnu/qt6/qml/QtGraphicalEffects ]; then
-    echo "   QtGraphicalEffects ist unter Qt6 ${rot}nicht vorhanden${aus} (so gehoert es sich)"
+if [ -z "$aktiver_dm" ]; then
+    echo "   ${rot}Kein Anmeldedienst laeuft oder ist aktiviert.${aus}"
+    basis=$(basename "${konfiguriert:-lightdm}")
+    merke "URSACHE: Anmeldedienst '$basis' ist nicht aktiv."
+    merke "  FIX: sudo systemctl enable --now $basis"
 fi
 echo
 
-echo "${fett}4) Ist das eingestellte Theme mit Qt6 vertraeglich?${aus}"
-theme_defekt=0
-if [ -n "$theme_aktuell" ] && [ -d "/usr/share/sddm/themes/$theme_aktuell" ]; then
-    if [ "$qt_major" = "6" ] && grep -rqs "QtGraphicalEffects" "/usr/share/sddm/themes/$theme_aktuell"; then
-        theme_defekt=1
-        echo "   ${rot}NEIN – '$theme_aktuell' importiert QtGraphicalEffects (nur Qt5).${aus}"
-        echo "   ${rot}Das ist die Ursache: der Anmeldebildschirm kann nicht laden.${aus}"
+# ------------------------------------------------- 3) Warum scheitert er?
+if [ -n "$aktiver_dm" ]; then
+    echo "${fett}3) Protokoll von $aktiver_dm (letzte Fehler)${aus}"
+    journalctl -b -u "$aktiver_dm" -p warning --no-pager 2>/dev/null | tail -12 | sed 's/^/   /'
+    [ -z "$(journalctl -b -u "$aktiver_dm" -p warning --no-pager 2>/dev/null)" ] && echo "   keine Warnungen/Fehler"
+    echo
+fi
+
+# ---------------------------------------------------------- 4) Grafiktreiber
+echo "${fett}4) Grafiktreiber${aus}"
+hat_nvidia=0
+lspci 2>/dev/null | grep -qi 'nvidia' && hat_nvidia=1
+if [ "$hat_nvidia" -eq 1 ]; then
+    echo "   NVIDIA-Karte vorhanden"
+    if lsmod | grep -q '^nvidia'; then
+        echo "   ${gruen}Kernelmodul 'nvidia' ist geladen${aus}"
     else
-        echo "   ${gruen}ja, sieht vertraeglich aus${aus}"
+        echo "   ${rot}Kernelmodul 'nvidia' ist NICHT geladen${aus}"
+        merke "URSACHE (wahrscheinlich): NVIDIA-Treiber installiert, Modul laedt nicht."
+
+        echo "   --- DKMS ---"
+        dkms status 2>/dev/null | sed 's/^/     /' | head -5
+        dkms status 2>/dev/null | grep -qi nvidia || echo "     kein NVIDIA-Modul gebaut"
+
+        sb=$(mokutil --sb-state 2>/dev/null | head -1)
+        echo "   --- Secure Boot: ${sb:-nicht ermittelbar} ---"
+        case "$sb" in *[Ee]nabled*)
+            echo "     ${rot}Secure Boot blockiert das unsignierte Modul.${aus}"
+            merke "  -> Secure Boot ist AN. Im BIOS/UEFI abschalten, dann neu starten." ;;
+        esac
+
+        log=$(ls -t /var/lib/dkms/nvidia/*/build/make.log 2>/dev/null | head -1)
+        if [ -n "$log" ]; then
+            echo "   --- Bau-Protokoll (letzte Fehler) ---"
+            grep -iE 'error|fehler' "$log" 2>/dev/null | tail -5 | sed 's/^/     /'
+        fi
+        echo "   --- ist nouveau blockiert? ---"
+        grep -rhs 'nouveau' /etc/modprobe.d/ 2>/dev/null | head -3 | sed 's/^/     /'
+        merke "  FIX (Desktop sofort zurueck): ./rettung.sh --nvidia-zurueck"
     fi
 else
-    echo "   Theme-Ordner nicht gefunden – auch das laesst SDDM scheitern."
-    [ -n "$theme_aktuell" ] && theme_defekt=1
+    echo "   keine NVIDIA-Karte"
+    lsmod | grep -qE '^amdgpu|^i915|^nouveau' && echo "   ${gruen}freier Treiber geladen${aus}"
 fi
 echo
 
-echo "${fett}5) Grafiktreiber${aus}"
-if lsmod | grep -q '^nvidia'; then
-    echo "   ${gruen}NVIDIA-Kernelmodul ist geladen${aus}"
-elif lspci 2>/dev/null | grep -qi nvidia; then
-    echo "   ${gelb}NVIDIA-Karte vorhanden, aber Modul NICHT geladen${aus}"
-    dkms status 2>/dev/null | grep -i nvidia | sed 's/^/   DKMS: /' || echo "   DKMS: kein NVIDIA-Modul gebaut"
-    sb=$(mokutil --sb-state 2>/dev/null | head -1)
-    echo "   Secure Boot: ${sb:-nicht ermittelbar}"
-    case "$sb" in *enabled*)
-        echo "   ${rot}-> Secure Boot ist an. Das unsignierte Modul wird blockiert.${aus}"
-        echo "   ${rot}   Im BIOS/UEFI abschalten oder das Modul per MOK signieren.${aus}" ;;
+# ------------------------------------------------ 5) Xorg-Fehler (falls X11)
+echo "${fett}5) Letzte Xorg-Fehler${aus}"
+xlog=$(ls -t /var/log/Xorg.0.log ~/.local/share/xorg/Xorg.0.log 2>/dev/null | head -1)
+if [ -n "$xlog" ]; then
+    grep -E '^\[.*\] \(EE\)' "$xlog" 2>/dev/null | tail -8 | sed 's/^/   /'
+    grep -qE '^\[.*\] \(EE\)' "$xlog" 2>/dev/null || echo "   keine (EE)-Fehler"
+else
+    echo "   kein Xorg-Protokoll gefunden (Wayland-Sitzung oder X nie gestartet)"
+fi
+echo
+
+# ----------------------------------------------------------------- Befund ---
+echo "${fett}==================================================${aus}"
+if [ -z "$befund" ]; then
+    echo "${gelb}Keine eindeutige Ursache gefunden.${aus}"
+    echo "Bitte diese Ausgabe abfotografieren und weitergeben:"
+    echo
+    journalctl -b -p err --no-pager 2>/dev/null | tail -20
+else
+    echo "${fett}BEFUND${aus}"
+    echo "$befund"
+fi
+echo "${fett}==================================================${aus}"
+
+# ------------------------------------------- Optionaler NVIDIA-Rueckbau -----
+if [ "${1:-}" = "--nvidia-zurueck" ]; then
+    echo
+    echo "${gelb}${fett}NVIDIA-Treiber entfernen und auf den freien Treiber zurueck${aus}"
+    echo "Danach hast du wieder einen Desktop – ohne die proprietaeren"
+    echo "NVIDIA-Funktionen. Der Treiber laesst sich spaeter neu einrichten,"
+    echo "sobald Secure Boot aus ist."
+    echo
+    read -r -p "Wirklich entfernen? [j/N]: " a
+    case "${a,,}" in j|ja)
+        sudo apt-get remove --purge -y 'nvidia-*' 'libnvidia-*' 2>/dev/null
+        sudo apt-get autoremove -y
+        sudo rm -f /etc/modprobe.d/nvidia*.conf
+        sudo update-initramfs -u
+        echo
+        echo "${gruen}Fertig. Jetzt neu starten: sudo reboot${aus}" ;;
+    *) echo "Abgebrochen." ;;
     esac
-else
-    echo "   keine NVIDIA-Karte erkannt"
 fi
-echo
-
-# ------------------------------------------------------------------ Fix ------
-if [ "$theme_defekt" -eq 0 ]; then
-    echo "${gruen}Das Anmelde-Theme ist nicht die Ursache.${aus}"
-    echo "Letzte 25 Zeilen aus dem SDDM-Protokoll:"
-    journalctl -b -u sddm --no-pager 2>/dev/null | tail -25
-    exit 0
-fi
-
-if [ "$nur_pruefen" -eq 1 ]; then
-    echo "${gelb}Nur-Pruefen-Modus – es wurde nichts geaendert.${aus}"
-    exit 0
-fi
-
-echo "${fett}=============================================${aus}"
-echo "${fett}  Reparatur${aus}"
-echo "${fett}=============================================${aus}"
-echo "Das Anmelde-Theme wird auf 'breeze' zurueckgesetzt (Qt6-tauglich,"
-echo "gehoert zu Plasma). Deine Desktop-Designs, die Tastatur und die"
-echo "Akzentfarbe bleiben unangetastet – nur der Anmeldebildschirm."
-echo
-read -r -p "Jetzt reparieren? [J/n]: " antwort
-case "${antwort,,}" in n|nein) echo "Abgebrochen."; exit 0 ;; esac
-
-ziel="/etc/sddm.conf.d/kde_settings.conf"
-[ -f "$ziel" ] || ziel=$(grep -rl '^\s*Current\s*=' /etc/sddm.conf /etc/sddm.conf.d/ 2>/dev/null | head -1)
-[ -n "$ziel" ] || ziel="/etc/sddm.conf.d/kde_settings.conf"
-
-echo
-echo "-> Sicherung anlegen"
-sudo cp -a "$ziel" "$ziel.bak-rettung-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
-
-echo "-> Theme auf 'breeze' setzen"
-if command -v kwriteconfig6 >/dev/null 2>&1; then
-    sudo kwriteconfig6 --file "$ziel" --group Theme --key Current breeze
-else
-    sudo sed -i 's/^\(\s*Current\s*=\).*/\1breeze/' "$ziel"
-fi
-grep -A2 '^\[Theme\]' "$ziel" | sed 's/^/   /'
-
-echo
-echo "-> Anmeldedienst neu starten"
-sudo systemctl restart sddm
-
-echo
-echo "${gruen}${fett}Fertig.${aus} Der Anmeldebildschirm sollte jetzt erscheinen."
-echo "Falls nicht, hier das Protokoll:"
-echo "   journalctl -b -u sddm --no-pager | tail -30"

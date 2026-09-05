@@ -101,7 +101,8 @@ Nach der Treiberinstallation ist ein **Neustart nötig** – erst dann löst der
 > nicht lädt, auf ein Ersatz-Theme zurückfällt, auch daran scheitert – und nach dem Neustart
 > **gar kein Anmeldebildschirm mehr erscheint**, der Rechner also in der Textkonsole landet.
 > Der Assistent prüft das jetzt vorher, installiert die Theme-Dateien trotzdem und lässt den
-> Anmeldebildschirm in Ruhe. Vor jeder Änderung an der SDDM-Konfiguration wird zusätzlich
+> Anmeldebildschirm in Ruhe. Auf einer Standard-Parrot-Installation greift das ohnehin nicht,
+> weil dort LightDM läuft und `/etc/sddm.conf.d/` gar nicht gelesen wird. Vor jeder Änderung an der SDDM-Konfiguration wird zusätzlich
 > eine Sicherung angelegt.
 
 ### 🌸 4. Rosa Akzentfarbe & Hintergrundbild
@@ -169,22 +170,28 @@ anmelden und ausführen:
 cd ~/parrot-setup-assistant && git pull && ./rettung.sh
 ```
 
-Das Skript prüft Anmeldedienst, Theme, Qt-Version, Grafiktreiber und Secure Boot, sagt
-dir, was die Ursache ist, und setzt auf Nachfrage den Anmeldebildschirm auf ein
-funktionierendes Theme zurück. Desktop-Designs, Tastatur und Akzentfarbe bleiben dabei
-unangetastet.
+Das Skript **ändert von sich aus nichts.** Es prüft der Reihe nach:
 
-Nur prüfen, ohne etwas zu ändern:
+1. Startziel des Systems (`graphical.target`?)
+2. Welcher Anmeldedienst eingetragen, aktiviert und aktiv ist — Parrot nutzt
+   standardmäßig **LightDM**, nicht SDDM
+3. Dessen Protokoll-Fehler
+4. Grafiktreiber: ist das `nvidia`-Kernelmodul geladen, hat DKMS gebaut, ist Secure Boot
+   an, was steht im Bau-Protokoll
+5. Xorg-Fehler
+
+Am Ende steht ein Befund mit dem passenden Befehl. Findet es keine eindeutige Ursache,
+gibt es die letzten Systemfehler aus — die kannst du abfotografieren und weitergeben.
+
+Lädt der NVIDIA-Treiber nicht und du willst erstmal nur wieder einen Desktop:
 
 ```bash
-./rettung.sh --nur-pruefen
+./rettung.sh --nvidia-zurueck
 ```
 
-Ohne Netzwerk geht es auch von Hand:
-
-```bash
-sudo kwriteconfig6 --file /etc/sddm.conf.d/kde_settings.conf --group Theme --key Current breeze && sudo systemctl restart sddm
-```
+Das entfernt den proprietären Treiber und fällt auf den freien zurück. Nach einem
+Neustart hast du wieder eine grafische Oberfläche; der NVIDIA-Treiber lässt sich später
+erneut einrichten, sobald Secure Boot aus ist.
 
 ---
 
@@ -193,7 +200,7 @@ sudo kwriteconfig6 --file /etc/sddm.conf.d/kde_settings.conf --group Theme --key
 | Symptom | Ursache & Lösung |
 |---|---|
 | `@` geht nach dem Neustart wieder nicht | `grep XKBLAYOUT /etc/default/keyboard` – muss `"de"` zeigen. Unter Wayland einmal ab- und anmelden. |
-| Nach dem Neustart nur Textkonsole, kein Anmeldebildschirm | Meist ein unverträgliches SDDM-Theme. `./rettung.sh` ausführen (siehe oben). |
+| Nach dem Neustart nur Textkonsole, kein Anmeldebildschirm | `./rettung.sh` ausführen (siehe oben) – meist lädt das NVIDIA-Kernelmodul nicht. |
 | Schwarzer Bildschirm nach NVIDIA-Neustart | Fast immer Secure Boot. Im BIOS/UEFI abschalten oder das Modul per MOK signieren. Prüfen mit `mokutil --sb-state`. |
 | Spiele starten in Steam nicht | Die 32-Bit-Treiberbibliotheken fehlen. Assistent mit Steam **und** NVIDIA zusammen nochmal laufen lassen. |
 | Rosa Akzentfarbe verschwindet | Passiert, wenn `AccentColorFromWallpaper` wieder aktiviert wurde – Punkt 4 erneut ausführen. |
