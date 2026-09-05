@@ -118,6 +118,48 @@ else
 fi
 echo "${fett}==================================================${aus}"
 
+# ---------------------------- Desktop-Designs auf Standard zuruecksetzen -----
+# Fuer den Fall: Anmeldung klappt, danach schwarzer Bildschirm. Dann startet
+# die Plasma-Sitzung nicht. Haeufigste Ursache sind alte Plasma-5-Designs
+# (Desktop-Theme, Splash, Fensterdekoration), an denen plasmashell scheitert.
+# Das Tastaturlayout bleibt dabei ausdruecklich erhalten.
+if [ "${1:-}" = "--desktop-standard" ]; then
+    echo
+    echo "${fett}Desktop-Designs auf den Plasma-Standard zuruecksetzen${aus}"
+    echo "Betroffen: Desktop-Theme, Ladebildschirm, Symbole, Fensterrahmen."
+    echo "${gruen}Dein Tastaturlayout bleibt unveraendert.${aus}"
+    echo
+
+    kw() {
+        kwriteconfig6 --file "$1" --group "$2" --key "$3" "$4" 2>/dev/null \
+        || kwriteconfig5 --file "$1" --group "$2" --key "$3" "$4" 2>/dev/null
+        echo "   $1 [$2] $3 = $4"
+    }
+
+    for f in plasmarc ksplashrc kdeglobals kwinrc; do
+        [ -f "$HOME/.config/$f" ] && cp -n "$HOME/.config/$f" "$HOME/.config/$f.bak-rettung" 2>/dev/null
+    done
+    echo "   (Sicherungen als *.bak-rettung abgelegt)"
+    echo
+
+    kw plasmarc   Theme                     name    default
+    kw ksplashrc  KSplash                   Engine  none
+    kw ksplashrc  KSplash                   Theme   None
+    kw kdeglobals Icons                     Theme   breeze
+    kw kwinrc     org.kde.kdecoration2      library org.kde.breeze
+    kw kwinrc     org.kde.kdecoration2      theme   Breeze
+    kw kwinrc     org.kde.kdecoration3      library org.kde.breeze
+    kw kwinrc     org.kde.kdecoration3      theme   Breeze
+
+    echo
+    echo "${gruen}${fett}Fertig.${aus} Jetzt neu starten:"
+    echo "   sudo reboot"
+    echo
+    echo "Kommt der Desktop danach hoch, lag es an den Designs."
+    echo "Bleibt es schwarz, lag es woanders – dann melde dich nochmal."
+    exit 0
+fi
+
 # ------------------------------------------- Optionaler NVIDIA-Rueckbau -----
 if [ "${1:-}" = "--nvidia-zurueck" ]; then
     echo
